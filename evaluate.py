@@ -1,21 +1,17 @@
 """
 Run the correctness evaluation and 
-upoad the results to langsmith
+upload the results to LangSmith
 
 Run with : python evaluate.py
-
 """
-
-#display the marksheet to the parents of students
-
 
 from hr_assistant.evaluation import run_evaluation
 
 def main():
-    print("RUNING THE HR POLICY ASSISTANT EVAL....")
+    print("RUNNING THE HR POLICY ASSISTANT EVAL....")
     results = run_evaluation()
-    print("Done open your langsmith and see your experiment in the langsmith")
+    print("Done — open your LangSmith and see your experiment in LangSmith")
     print(results)
 
 if __name__ == "__main__":
-    run_evaluation()
+    main()

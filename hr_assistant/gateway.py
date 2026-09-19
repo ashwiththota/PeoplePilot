@@ -77,19 +77,18 @@ def get_gateway_llm() -> ChatOpenAI:
         default_headers=headers,
     )
 
-   
 
-    def get_judge_llm() -> ChatOpenAI:
-     """Return a chat model routed through Portkey (no config/fallback - see module docstring)."""
-     logger.info("Routing LLM calls through Portkey (provider=%s)", JUDGE_PROVIDER)
+def get_judge_llm() -> ChatOpenAI:
+    """Return a judge chat model routed through Portkey, using its own provider slug."""
+    logger.info("Routing LLM calls through Portkey (provider=%s)", JUDGE_PROVIDER)
 
-     headers = createHeaders(
+    headers = createHeaders(
         api_key=config.PORTKEY_API_KEY,
         provider=JUDGE_PROVIDER,
-     )
-     return ChatOpenAI(
+    )
+    return ChatOpenAI(
         api_key=config.PORTKEY_API_KEY,
         base_url=PORTKEY_GATEWAY_URL,
         model=PRIMARY_TARGET["override_params"]["model"],
         default_headers=headers,
-     )
+    )

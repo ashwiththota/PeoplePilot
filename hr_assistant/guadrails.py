@@ -31,6 +31,7 @@ REFUSAL_MESSAGE = " Sorry, I  can't help with that request. "
 _guard_llm = ChatGroq(
     model=config.GUARD_MODEL_NAME,
     temperature=0,
+    api_key=config.GROQ_API_KEY,
 )
 
 ##

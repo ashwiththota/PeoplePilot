@@ -12,33 +12,22 @@ LangSmith as a Dataset + Experiment,
 so quality can be compared across
 runs (after a prompt change, a new model, a new guardrail, etc).
 
-The judge model is routed through Portkey too,
-using the same slug as
-the main app's LLM (gateway.py's PRIMARY_PROVIDER) 
-but a different
-underlying model (JUDGE_MODEL_NAME) - 
-so it isn't grading its own
-output verbatim, without needing a second slug set up.
-
+The judge model is routed through Portkey too, using its own
+provider slug (gateway.py's get_judge_llm) so it isn't grading
+its own output verbatim.
 """
 
-
-
-
-from langchain_openai import ChatOpenAI
 from hr_assistant import config
-from hr_assistant.gateway import PRIMARY_TARGET , JUDGE_PROVIDER
+from hr_assistant.gateway import get_judge_llm
 from hr_assistant.logger import get_logger
-from hr_assistant.pipeline import ask , build_hr_assistant
-from hr_assistant.vector_store import get_retriever,load_vector_store
+from hr_assistant.pipeline import ask, build_hr_assistant
+from hr_assistant.vector_store import get_retriever, load_vector_store
 
 from langsmith import Client
 
 from openevals.llm import create_llm_as_judge
 
-from openevals.prompts import CORRECTNESS_PROMPT , RAG_GROUNDEDNESS_PROMPT
-
-from portkey_ai import createHeaders , PORTKEY_GATEWAY_URL
+from openevals.prompts import CORRECTNESS_PROMPT, RAG_GROUNDEDNESS_PROMPT
 
 logger = get_logger(__name__)
 
@@ -72,7 +61,6 @@ TEST_CASES = [
         "answer": "3 unexcused tardy incidents within a 30-day rolling window.",
         "reference_doc": "Document 1, Chapter 2.3"
     },
-
     # --- CHAPTER 3: LEAVE POLICIES ---
     {
         "question": "How many days of Paid Time Off (PTO) do full-time employees accrue per year?",
@@ -99,7 +87,6 @@ TEST_CASES = [
         "answer": "Up to 5 consecutive paid working days.",
         "reference_doc": "Document 1, Chapter 3.4"
     },
-
     # --- CHAPTER 4 & 5: CODE OF CONDUCT & PERFORMANCE ---
     {
         "question": "What are the rules for corporate password length and password updates?",
@@ -116,7 +103,6 @@ TEST_CASES = [
         "answer": "Bi-annually: the Mid-Year Review occurs in July and the End-of-Year Review occurs in December.",
         "reference_doc": "Document 1, Chapter 5.1"
     },
-
     # --- CHAPTER 6 & 7: EXPENSES & RESIGNATION ---
     {
         "question": "What is the monthly wellness allowance stipend, and when must reimbursement receipts be submitted?",
@@ -143,7 +129,6 @@ TEST_CASES = [
         "answer": "Within 14 calendar days.",
         "reference_doc": "Document 1, Chapter 7.2"
     },
-
     # --- DOCUMENT 2: IT SECURITY & DATA GOVERNANCE ---
     {
         "question": "Within how many hours must a lost or stolen device be reported to IT Security?",
@@ -160,7 +145,6 @@ TEST_CASES = [
         "answer": "The CEO must be notified within 15 minutes, and public/customer disclosure must be initiated within 72 hours.",
         "reference_doc": "Document 2, Section 4.1"
     },
-
     # --- CROSS-DOCUMENT / MULTI-HOP TEST CASES ---
     {
         "question": "Who is responsible for handling IT hardware asset returns when an employee leaves the company, and what is their contact email?",
@@ -184,29 +168,16 @@ TEST_CASES = [
     }
 ]
 
-JUDGE_MODEL_NAME = "openai/gpt-oss-20b"
 
-# making llm as a judge
-
-def _get_judge_llm() -> ChatOpenAI:
-    """Return a judge model routed through Portkey, same slug as the main app."""
-    headers = createHeaders(api_key=config.PORTKEY_API_KEY, 
-             provider=JUDGE_PROVIDER)
-    return ChatOpenAI(
-        api_key=config.PORTKEY_API_KEY, 
-        base_url=PORTKEY_GATEWAY_URL, 
-        default_headers=headers, 
-        model=JUDGE_MODEL_NAME)
-
-# if dataset is there reuse it , if not create a new dataset 
-# question paper 
+# if dataset is there reuse it , if not create a new dataset
+# question paper
 def _ensure_dataset(client: Client):
     """Create the LangSmith dataset if it doesn't exist yet, and upload the test cases."""
     if client.has_dataset(dataset_name=DATASET_NAME):
         logger.info("Dataset '%s' already exists, reusing it", DATASET_NAME)
         return client.read_dataset(dataset_name=DATASET_NAME)
 
-    logger.info("Creating dataset '%s' with %d example(s)", 
+    logger.info("Creating dataset '%s' with %d example(s)",
         DATASET_NAME, len(TEST_CASES))
     dataset = client.create_dataset(dataset_name=DATASET_NAME)
     client.create_examples(
@@ -219,9 +190,10 @@ def _ensure_dataset(client: Client):
     )
     return dataset
 
+
 # start the exam
 def run_evaluation():
-    """Upload the dataset (if needed) 
+    """Upload the dataset (if needed)
     and run the correctness evaluation."""
     client = Client()
     dataset = _ensure_dataset(client)
@@ -231,14 +203,17 @@ def run_evaluation():
     agent = build_hr_assistant()
     retriever = get_retriever(load_vector_store())
 
-    # write the answers 
+    # Reused across both evaluators instead of creating the judge LLM twice.
+    judge_llm = get_judge_llm()
+
+    # write the answers
     def target(inputs: dict) -> dict:
         """
-        Run one test question through the real agent, 
+        Run one test question through the real agent,
         and also capture
-        the retrieved chunks 
+        the retrieved chunks
         so groundedness can check the answer against
-        what was actually retrieved 
+        what was actually retrieved
         (not just the reference answer).
         """
         answer = ask(agent, inputs["question"])
@@ -246,21 +221,23 @@ def run_evaluation():
         context = "\n\n".join(chunk.page_content for chunk in chunks)
         return {"answer": answer, "context": context}
 
-    # giving marks 
+    # giving marks
     correctness_evaluator = create_llm_as_judge(
         prompt=CORRECTNESS_PROMPT,
         feedback_key="correctness",
-        judge=_get_judge_llm(),
+        judge=judge_llm,
     )
 
     groundedness_judge = create_llm_as_judge(
         prompt=RAG_GROUNDEDNESS_PROMPT,
         feedback_key="groundedness",
-        judge=_get_judge_llm(),
+        judge=judge_llm,
     )
 
     def groundedness_evaluator(outputs: dict, **kwargs) -> dict:
         """Check the answer is supported by the retrieved context, not invented."""
+        if not outputs or "answer" not in outputs or "context" not in outputs:
+            return {"key": "groundedness", "score": None, "comment": "Target function failed; no output to evaluate."}
         return groundedness_judge(outputs={"answer": outputs["answer"]}, context=outputs["context"])
 
     logger.info("Running evaluation against dataset '%s'", DATASET_NAME)
@@ -271,6 +248,6 @@ def run_evaluation():
                 groundedness_evaluator],
         experiment_prefix="hr-policy-evalzz",
         description="HR policy assistant correctness + groundedness evaluation",
+        max_concurrency=1,
     )
-
 
